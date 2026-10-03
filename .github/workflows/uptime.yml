@@ -1,0 +1,36 @@
+name: uptime
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+permissions:
+  contents: write
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: pip install -q -r requirements.txt
+      - run: python check.py
+        env:
+          OCI_USER: ${{ secrets.OCI_USER }}
+          OCI_TENANCY: ${{ secrets.OCI_TENANCY }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_KEY: ${{ secrets.OCI_KEY }}
+      # GitHub stops the schedule of a repository with no commits in 60 days: one a month keeps it.
+      - name: keep the schedule alive
+        if: github.event_name == 'schedule'
+        run: |
+          if [ "$(date -u +%d%H%M | cut -c1-5)" = "01000" ]; then
+            git config user.name "medplum-uptime"; git config user.email "uptime@medplum.site"
+            date -u > .keepalive && git add .keepalive && git commit -qm "keep the uptime schedule alive" && git push -q
+          fi
