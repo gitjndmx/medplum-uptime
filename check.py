@@ -19,10 +19,14 @@ import datetime, json, os, ssl, sys, urllib.error, urllib.request
 
 API = "https://api.medplum.site"
 TIMEOUT = 20
+# Every request says where the checker runs (github or mac): the clinic's audit finds the checker's
+# requests in its own web log, so "watched from outside" is proven from the box, wherever it runs.
+WHERE = os.environ.get("UPTIME_WHERE", "github")
+UA = "medplum-uptime/%s" % WHERE
 
 
 def fetch(url, method="GET", body=None, headers=None):
-    r = urllib.request.Request(url, method=method, data=body, headers=headers or {})
+    r = urllib.request.Request(url, method=method, data=body, headers={"User-Agent": UA, **(headers or {})})
     try:
         with urllib.request.urlopen(r, timeout=TIMEOUT, context=ssl.create_default_context()) as res:
             return res.status, res.read(200000).decode("utf-8", "replace"), dict(res.headers)
@@ -69,8 +73,9 @@ def checks():
 
 def post(results):
     import oci
+    key = os.environ.get("OCI_KEY") or open(os.environ["OCI_KEY_FILE"]).read()
     cfg = {"user": os.environ["OCI_USER"], "tenancy": os.environ["OCI_TENANCY"], "fingerprint": os.environ["OCI_FINGERPRINT"],
-           "region": "us-chicago-1", "key_content": os.environ["OCI_KEY"]}
+           "region": "us-chicago-1", "key_content": key}
     client = oci.monitoring.MonitoringClient(cfg, service_endpoint="https://telemetry-ingestion.us-chicago-1.oraclecloud.com")
     now = datetime.datetime.now(datetime.timezone.utc)
     data = [oci.monitoring.models.MetricDataDetails(
@@ -83,6 +88,13 @@ def post(results):
 
 
 if __name__ == "__main__":
+    if "--env" in sys.argv:   # the Mac's launchd job: settings from a root-of-trust file, not the plist
+        for line in open(sys.argv[sys.argv.index("--env") + 1]):
+            if "=" in line:
+                k, v = line.strip().split("=", 1)
+                os.environ.setdefault(k, v)
+        WHERE = os.environ.get("UPTIME_WHERE", WHERE)
+        UA = "medplum-uptime/%s" % WHERE
     res = checks()
     for k, (ok, why) in res.items():
         print("%-15s %s  %s" % (k, "UP  " if ok else "DOWN", why))
