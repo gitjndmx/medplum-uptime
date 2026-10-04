@@ -1,17 +1,29 @@
 name: uptime
+# Every 5 minutes, from outside the clinic's server. GitHub's own schedule for this repository did not
+# start (4 Oct 2026), so a run checks every 5 minutes for just under six hours (a run's limit) and then
+# starts the next run itself. The schedule stays as a backstop and does a single check. If the chain
+# ever breaks, Oracle's "the outside checker has stopped" alarm fires within 20 minutes, and the clinic's
+# nightly audit sees it too.
 on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch: {}
 permissions:
   contents: write
+  actions: write
 concurrency:
-  group: uptime
+  group: uptime-${{ github.event_name }}
   cancel-in-progress: false
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 355
+    env:
+      OCI_USER: ${{ secrets.OCI_USER }}
+      OCI_TENANCY: ${{ secrets.OCI_TENANCY }}
+      OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+      OCI_KEY: ${{ secrets.OCI_KEY }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -20,17 +32,24 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
       - run: pip install -q -r requirements.txt
-      - run: python check.py
-        env:
-          OCI_USER: ${{ secrets.OCI_USER }}
-          OCI_TENANCY: ${{ secrets.OCI_TENANCY }}
-          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
-          OCI_KEY: ${{ secrets.OCI_KEY }}
-      # GitHub stops the schedule of a repository with no commits in 60 days: one a month keeps it.
-      - name: keep the schedule alive
+      - name: one check (the schedule)
         if: github.event_name == 'schedule'
+        run: python check.py
+      - name: every 5 minutes for 5 h 40 min, then the next run
+        if: github.event_name != 'schedule'
         run: |
-          if [ "$(date -u +%d%H%M | cut -c1-5)" = "01000" ]; then
+          end=$(( $(date +%s) + 340*60 ))
+          while [ "$(date +%s)" -lt "$end" ]; do
+            python check.py || echo "this round failed - the alarm decides, not the loop"
+            sleep 300
+          done
+          gh workflow run uptime.yml -R "$GITHUB_REPOSITORY" --ref main
+      # GitHub stops a repository's workflows after 60 days with no commits: one a month keeps them.
+      - name: keep the workflows alive
+        if: always()
+        run: |
+          last=$(git log -1 --format=%ct)
+          if [ $(( $(date +%s) - last )) -gt $(( 25*86400 )) ]; then
             git config user.name "medplum-uptime"; git config user.email "uptime@medplum.site"
-            date -u > .keepalive && git add .keepalive && git commit -qm "keep the uptime schedule alive" && git push -q
+            date -u > .keepalive && git add .keepalive && git commit -qm "keep the uptime workflows alive" && git push -q
           fi
