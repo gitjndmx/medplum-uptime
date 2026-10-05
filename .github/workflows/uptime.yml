@@ -1,7 +1,9 @@
 name: uptime
 # Every 5 minutes, from outside the clinic's server. GitHub's own schedule for this repository did not
 # start (4 Oct 2026), so a run checks every 5 minutes for just under six hours (a run's limit) and then
-# starts the next run itself. The schedule stays as a backstop and does a single check. If the chain
+# starts the next run itself. The schedule stays as a backstop: a single check, and it restarts the chain
+# when no run is going (5 Oct 2026: GitHub could not start a run for twenty minutes, the run that would
+# have started the next never ran, and the chain stopped until restarted by hand). If the chain
 # ever breaks, Oracle's "the outside checker has stopped" alarm fires within 20 minutes, and the clinic's
 # nightly audit sees it too.
 on:
@@ -35,6 +37,12 @@ jobs:
       - name: one check (the schedule)
         if: github.event_name == 'schedule'
         run: python check.py
+      - name: restart the chain if it has stopped (the schedule)
+        if: github.event_name == 'schedule'
+        run: |
+          going=$(gh run list -R "$GITHUB_REPOSITORY" -w uptime.yml -e workflow_dispatch -L 10 --json status \
+            -q '[.[] | select(.status != "completed")] | length')
+          if [ "$going" = "0" ]; then echo "no run going - starting the chain"; gh workflow run uptime.yml -R "$GITHUB_REPOSITORY" --ref main; else echo "the chain is running"; fi
       - name: every 5 minutes for 5 h 40 min, then the next run
         if: github.event_name != 'schedule'
         run: |
