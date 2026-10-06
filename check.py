@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Medplum Health, watched from outside - run every 5 minutes by GitHub Actions (not on the clinic's
+"""Upkeep, watched from outside - run every 5 minutes by GitHub Actions (not on the clinic's
 own server, which is what it watches).
 
 Each check posts up=1 or up=0 to Oracle Cloud Monitoring (namespace medplum_uptime, dimension
 `check`). Alarms there email the clinic through Oracle Notifications - so an outage is reported even
 when the clinic's server, its email and its own monitoring are all down together:
-  - any check at 0                     -> "Medplum Health: <check> is down"
+  - any check at 0                     -> "Upkeep: <check> is down"
   - no data for 20 minutes             -> "the outside checker has stopped" (GitHub delayed or
                                            disabled the schedule, or its key stopped working)
   - the box's own metrics absent       -> "the server has gone silent"
@@ -17,9 +17,9 @@ belongs to can do nothing but post metrics to this one namespace.
 """
 import datetime, json, os, ssl, sys, urllib.error, urllib.request
 
-API = "https://api.medplum.site"
+API = "https://api.upkeep.clinic"
 TIMEOUT = 20
-# Every request says where the checker runs (github or mac): the clinic's audit finds the checker's
+# Every request says where the checker runs: the clinic's audit finds the checker's
 # requests in its own web log, so "watched from outside" is proven from the box, wherever it runs.
 WHERE = os.environ.get("UPTIME_WHERE", "github")
 UA = "medplum-uptime/%s" % WHERE
@@ -38,9 +38,9 @@ def fetch(url, method="GET", body=None, headers=None):
 
 def checks():
     out = {}
-    s, b, _ = fetch("https://portal.medplum.site/")
+    s, b, _ = fetch("https://portal.upkeep.clinic/")
     out["portal"] = (s == 200 and "<div id=\"root\"" in b, "HTTP %s" % s)
-    s, b, _ = fetch("https://medplum.site/")
+    s, b, _ = fetch("https://app.upkeep.clinic/")
     out["provider"] = (s == 200 and "<div id=\"root\"" in b, "HTTP %s" % s)
     s, b, _ = fetch(API + "/healthcheck")
     try:
@@ -50,8 +50,8 @@ def checks():
         ok = False
     out["api"] = (bool(ok), "HTTP %s %s" % (s, b[:80]))
     # The sign-up route answers its browser preflight (a real sign-up would make a record).
-    s, _, hd = fetch(API + "/signup", method="OPTIONS", headers={"Origin": "https://portal.medplum.site", "Access-Control-Request-Method": "POST"})
-    out["signup"] = (s == 204 and hd.get("Access-Control-Allow-Origin") == "https://portal.medplum.site", "HTTP %s" % s)
+    s, _, hd = fetch(API + "/signup", method="OPTIONS", headers={"Origin": "https://portal.upkeep.clinic", "Access-Control-Request-Method": "POST"})
+    out["signup"] = (s == 204 and hd.get("Access-Control-Allow-Origin") == "https://portal.upkeep.clinic", "HTTP %s" % s)
     # Stripe's webhook receiver answers - and refuses an unsigned event, as it must.
     s, _, _ = fetch(API + "/stripe/webhook", method="POST", body=b"{}", headers={"Content-Type": "application/json"})
     out["stripe-webhook"] = (s in (400, 401, 403), "HTTP %s (an unsigned event must be refused, not crash or time out)" % s)
@@ -88,7 +88,7 @@ def post(results):
 
 
 if __name__ == "__main__":
-    if "--env" in sys.argv:   # the Mac's launchd job: settings from a root-of-trust file, not the plist
+    if "--env" in sys.argv:   # settings from a file, for a run outside GitHub
         for line in open(sys.argv[sys.argv.index("--env") + 1]):
             if "=" in line:
                 k, v = line.strip().split("=", 1)
